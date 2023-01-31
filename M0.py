@@ -4,7 +4,6 @@ import json
 import pandas as pd
 from aiohttp import web
 
-
 routes = web.RouteTableDef()
 
 
@@ -18,7 +17,11 @@ async def json_data(request):
         for i, item in enumerate(whole_data):
             db_item = {"python_code": item["content"]}
             database[client_ids[i]] = db_item
-        print(database)
+        # print(database)
+        for client in database:
+            code = database[client]['python_code']
+            avg_letters = sum(len(word) for word in code.split()) / len(code.split())
+            print(f"For {client}, average number of letters is: {avg_letters}")
         return web.json_response(database, status=200)
 
 
