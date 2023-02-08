@@ -6,9 +6,11 @@ from aiohttp import web
 
 routes = web.RouteTableDef()
 
+
 async def process_data(client, code):
     avg_letters = sum(len(word) for word in code.split()) / len(code.split())
     print(f"For {client}, average number of letters is: {avg_letters}")
+
 
 @routes.get("/JsonData")
 async def json_data(request):
@@ -28,15 +30,7 @@ async def json_data(request):
                 final_results = await asyncio.gather(*baza)
                 final_results = [await x.json() for x in final_results]
 
-
             return web.json_response(final_results, status=200)
-
-"""""
-            async with session.post("http://0.0.0.0:8082/JsonData", json=database) as res:
-                result = await res.json()
-                """
-
-
 
 app = web.Application()
 app.router.add_routes(routes)

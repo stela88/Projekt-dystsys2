@@ -2,47 +2,38 @@ import asyncio
 import aiohttp
 import pandas as pd
 
+# Generate list of client IDs
+client_ids = list(range(1, 10001))
 
-async def process_code(clients):
-    tasks = []
-    results = []
+# Load the dataframe
+df = pd.read_json("file-000000000040.json", lines=True)
+print("Dataframe loaded.")
 
+# Calculate rows per client
+rows_per_client = len(df) // len(client_ids)
+
+# Split the dataframe into chunks for each client
+df_chunks = [df.iloc[i:i + rows_per_client] for i in range(0, len(df), rows_per_client)]
+
+# Create a dict of client IDs and their code (by adding code from rows as value to ID property)
+clients = {idx: chunk["content"].tolist() for idx, chunk in zip(client_ids, df_chunks)}
+
+# Define an async function for processing codes
+async def process_codes(client_id, codes):
     async with aiohttp.ClientSession() as session:
-        for id, codes in clients.items():
-            tasks.append(
-                asyncio.create_task(session.get("http://127.0.0.1:8080/", json={"client": id, "codes": codes})))
-        results = await asyncio.gather(*tasks)
-        results = [await x.json() for x in results]
-    return results
-
+        response = await session.get("http://127.0.0.1:8080/", json={"client": client_id, "codes": codes})
+        result = await response.json()
+        return result
 
 async def main():
-    print("Running client script...\n")
+    # Send requests for code processing
+    print("Sending data...")
+    tasks = [process_codes(client_id, codes) for client_id, codes in clients.items()]
+    results = await asyncio.gather(*tasks)
+    print("Results of data processing for all clients retrieved.")
 
-    # generate list of client IDs
-    list_of_client_ids = list(range(1, 10001))
-
-    # load dataframe
-    print("Loading dataframe...\n")
-    dataframe = pd.read_json("data/dataset.json", lines=True)
-    print("Dataframe loaded.\n")
-
-    # calculate rows per client
-    rows_per_client = int(len(dataframe) / len(list_of_client_ids))  # 10
-
-    # create dict for client IDs and their code
-    clients = {id: [] for id in list_of_client_ids}
-    for id, codes in clients.items():
-        from_row = (id - 1) * rows_per_client
-        to_row = from_row + rows_per_client
-        for index, row in dataframe.iloc[from_row + 1:to_row + 1].iterrows():
-            codes.append(row.get("content"))
-
-    results = await process_code(clients)
-
-    # log average number of letters for clients' code
+    # Log the average number of letters for clients' code
     for result in results:
-        print("Average code length for client with ID", result.get("client"), "is", result.get("averageWordcount"))
+        print(f"Average code length for client with ID {result['client']} is {result['averageWordcount']}")
 
-
-asyncio.get_event_loop().run_until_complete(main())
+asyncio.run(main())
