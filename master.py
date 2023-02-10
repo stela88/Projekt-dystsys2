@@ -1,75 +1,76 @@
-from aiohttp import web
-import random
-import asyncio
 import aiohttp
+from aiohttp import web
+import asyncio
+import json
 import logging
+import random
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+logging.basicConfig(level=logging.INFO)
+
+CHUNK_SIZE = 1000
+MAX_REQUESTS = 10_000
+received_requests = 0
+received_responses = 0
+sent_tasks = 0
+received_tasks = 0
 
 num_workers = random.randint(5, 10)
-print("Number of workers:", num_workers)
 
-workers = {"worker_{}".format(id): [] for id in range(1, num_workers + 1)}
-print("Workers:", workers)
-
-SAMPLE_SIZE = 1000
-MAX_NUM_REQUESTS = 10000
-num_received_requests = 0
-num_returned_responses = 0
-num_sent_tasks = 0
-num_completed_tasks = 0
+workers = {"worker_id_" + str(id): [] for id in range(0, num_workers)}
 
 routes = web.RouteTableDef()
 
-
 @routes.get("/")
-async def main_function(request):
-    global num_workers, chunk_size, max_num_req_res
-    global num_received_reqs, num_returned_resps
-    global num_sent_tasks, num_completed_tasks
+async def master_handler(request):
+    try:
+        global received_responses
+        global sent_tasks
+        logging.info(f"Current requests status: {int(received_requests / MAX_REQUESTS)}")
 
-    num_received_reqs += 1
-    logging.info(f"New request received. Current received requests status: {num_received_reqs} / {max_num_req_res}")
-    data = await request.json()
-    codes_length = len(data.get("codes"))
+        client_data = await request.json()
 
-    all_codes = '\n'.join(data.get("codes"))
-    codes = all_codes.split("\n")
-    data["codes"] = ["\n".join(codes[i:i + chunk_size]) for i in range(0, len(codes), chunk_size)]
+        combined_code = "\n".join(client_data.get("code"))
+        code_split_newline = combined_code.split("\n")
+        client_data["code"] = [
+            "\n".join(code_split_newline[i : i + CHUNK_SIZE])
+            for i in range(0, len(code_split_newline), CHUNK_SIZE)
+        ]
 
-    tasks = []
-    results = []
-    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
+        tasks = []
+        results = []
+        async with aiohttp.ClientSession() as session:
+            active_worker = 1
+            for i in range(len(client_data.get("code"))):
+                task = asyncio.create_task(
+                    session.get(
+                        f"http://localhost:{8080 + active_worker}/worker_{active_worker}",
+                        json={"id": client_data.get("id"), "code": client_data.get("code")[i]},
+                    )
+                )
+                sent_tasks += 1
+                tasks.append(task)
+                workers["worker_id_" + str(active_worker)].append(tasks)
 
-        current_worker = 1
-        for i in range(len(data.get("codes"))):
-            task = asyncio.create_task(
-                session.get(f"http://127.0.0.1:{8080 + current_worker}/",
-                            json={"id": data.get("client"), "data": data.get("codes")[i]})
-            )
-            num_sent_tasks += 1
-            logging.info(f"New task sent to worker {current_worker}. Current sent tasks status: {num_sent_tasks}")
-            tasks.append(task)
-            workers["workerWithId{}".format(current_worker)].append(task)
-            if current_worker == num_workers:
-                current_worker = 1
-            else:
-                current_worker += 1
+                if active_worker != num_workers:
+                    active_worker += 1
 
-        results = await asyncio.gather(*tasks)
-        num_completed_tasks += len(results)
-        logging.info(
-            f"Another {len(results)} more tasks completed. Current completed tasks status: {num_completed_tasks}")
-        results = [await result.json() for result in results]
-        results = [result.get("numberOfWords") for result in results]
+            results = await asyncio.gather(*tasks)
+            results = [await data.json() for data in results]
 
-    num_returned_resps += 1
-    logging.info(f"New response sent. Current sent responses status: {num_returned_resps} / {max_num_req_res}")
+            avg_word_counter = [result.get("number_of_words") for result in results]
+            avg_word_counter = int(sum(avg_word_counter) / len(client_data.get("code")))
 
-    return web.json_response({"status": "OK", "client": data.get("client"),
-                              "averageWordcount": round(sum(results) / codes_length, 2)}, status=200)
+            received_responses += 1
 
+        return web.json_response(
+            {"status": "ok", "average words": avg_word_counter}, status=200
+        )
+
+    except Exception as e:
+        return web.json_response({"port": 8080, "error": str(e)}, status=500)
 
 app = web.Application()
+
 app.router.add_routes(routes)
-web.run_app(app, port=8080, access_log=None)
+
+web.run_app(app, port=8080)

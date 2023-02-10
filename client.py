@@ -2,38 +2,32 @@ import asyncio
 import aiohttp
 import pandas as pd
 
-# Generate list of client IDs
 client_ids = list(range(1, 10001))
-
-# Load the dataframe
 df = pd.read_json("file-000000000040.json", lines=True)
-print("Dataframe loaded.")
 
-# Calculate rows per client
-rows_per_client = len(df) // len(client_ids)
+rows_per_client = int(len(df) / len(client_ids))
+clients = {id: [] for id in client_ids}
+for client_id, codes in clients.items():
+    from_row = (client_id - 1) * rows_per_client
+    to_row = from_row + rows_per_client
+    for _, row in df.iloc[from_row + 1:to_row + 1].iterrows():
+        codes.append(row.get("content"))
 
-# Split the dataframe into chunks for each client
-df_chunks = [df.iloc[i:i + rows_per_client] for i in range(0, len(df), rows_per_client)]
+tasks = []
+results = []
 
-# Create a dict of client IDs and their code (by adding code from rows as value to ID property)
-clients = {idx: chunk["content"].tolist() for idx, chunk in zip(client_ids, df_chunks)}
 
-# Define an async function for processing codes
-async def process_codes(client_id, codes):
+async def process_code():
     async with aiohttp.ClientSession() as session:
-        response = await session.get("http://127.0.0.1:8080/", json={"client": client_id, "codes": codes})
-        result = await response.json()
-        return result
+        for client_id, codes in clients.items():
+            tasks.append(asyncio.create_task(
+                session.get("http://127.0.0.1:8080/", json={"client": client_id, "codes": codes})
+            ))
+        results = await asyncio.gather(*tasks)
+        results = [await result.json() for result in results]
 
-async def main():
-    # Send requests for code processing
-    print("Sending data...")
-    tasks = [process_codes(client_id, codes) for client_id, codes in clients.items()]
-    results = await asyncio.gather(*tasks)
-    print("Results of data processing for all clients retrieved.")
-
-    # Log the average number of letters for clients' code
     for result in results:
-        print(f"Average code length for client with ID {result['client']} is {result['averageWordcount']}")
+        print("Average code length for client with ID", result.get("client"), "is", result.get("averageWordcount"))
 
-asyncio.run(main())
+
+asyncio.get_event_loop().run_until_complete(process_code())
